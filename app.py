@@ -1,24 +1,19 @@
-import streamlit as st, shutil, subprocess
-st.write("ffmpeg path:", shutil.which("ffmpeg"))
-if shutil.which("ffmpeg"):
-    v = subprocess.check_output(["ffmpeg","-version"]).decode().splitlines()[0]
-    st.success(v)
-else:
-    st.error("ffmpeg not found")
-
-# app.py
 # -*- coding: utf-8 -*-
-import os
-import io
-import zipfile
-import shutil
-import tempfile
-import subprocess
-import hashlib
-import base64
+# 先匯入，再立刻設定 page_config（任何 st.xxx 之前）
+import streamlit as st
+st.set_page_config(page_title="GIF 轉檔器", layout="wide")
+
+import os, io, zipfile, tempfile, subprocess, hashlib, base64, shutil
 from pathlib import Path
 
-import streamlit as st
+# 優先使用 imageio-ffmpeg 內建的 ffmpeg，找不到就用系統的；ffprobe 用系統的（Debian ffmpeg 套件會一起安裝）
+try:
+    from imageio_ffmpeg import get_ffmpeg_exe
+    FFMPEG = shutil.which("ffmpeg") or get_ffmpeg_exe()
+except Exception:
+    FFMPEG = shutil.which("ffmpeg")
+
+FFPROBE = shutil.which("ffprobe")
 
 # ===================== 公用工具 =====================
 
@@ -33,8 +28,13 @@ def human_size(num_bytes: float) -> str:
         num_bytes /= 1024.0
     return f"{num_bytes:.2f} PB"
 
-def command_exists(cmd: str) -> bool:
-    return shutil.which(cmd) is not None
+def command_exists(cmd_or_path: str) -> bool:
+    if not cmd_or_path:
+        return False
+    # 允許傳入完整路徑或可執行名
+    if "/" in cmd_or_path:
+        return Path(cmd_or_path).exists()
+    return shutil.which(cmd_or_path) is not None
 
 def run_cmd(cmd: list) -> tuple[bool, str]:
     try:
@@ -55,7 +55,7 @@ _COMPRESS_PRESETS = {
 }
 
 def gifsicle_optimize(gif_path: str, compress_level: str = "平衡") -> None:
-    """依壓縮等級進行幀差最佳化；若系統沒有 gifsicle 则直接跳過。"""
+    """依壓縮等級進行幀差最佳化；若系統沒有 gifsicle 則直接跳過。"""
     if not command_exists("gifsicle"):
         return
     preset = _COMPRESS_PRESETS.get(compress_level, _COMPRESS_PRESETS["平衡"])
@@ -80,12 +80,12 @@ def save_bytes_to_tmp(extension: str, data: bytes) -> str:
 
 def get_media_duration_sec_from_bytes(data: bytes, suffix: str) -> float | None:
     """用 ffprobe 取得媒體秒數；suffix 例如 '.mp4'、'.gif'。失敗回傳 None。"""
-    if not command_exists("ffprobe"):
+    if not command_exists(FFPROBE):
         return None
     tmp_in = save_bytes_to_tmp(suffix, data)
     try:
         ok, out = run_cmd([
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            FFPROBE, "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", tmp_in
         ])
         if ok and out.strip():
@@ -95,7 +95,7 @@ def get_media_duration_sec_from_bytes(data: bytes, suffix: str) -> float | None:
                 pass
         # 再嘗試讀取串流的 duration
         ok2, out2 = run_cmd([
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            FFPROBE, "-v", "error", "-select_streams", "v:0",
             "-show_entries", "stream=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", tmp_in
         ])
@@ -111,12 +111,12 @@ def get_media_duration_sec_from_bytes(data: bytes, suffix: str) -> float | None:
 
 def get_media_dimensions_from_bytes(data: bytes, suffix: str) -> tuple[int, int] | None:
     """用 ffprobe 取得媒體寬高 (width, height)；suffix 例如 '.mp4'、'.gif'。失敗回傳 None。"""
-    if not command_exists("ffprobe"):
+    if not command_exists(FFPROBE):
         return None
     tmp_in = save_bytes_to_tmp(suffix, data)
     try:
         ok, out = run_cmd([
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            FFPROBE, "-v", "error", "-select_streams", "v:0",
             "-show_entries", "stream=width,height",
             "-of", "csv=p=0:s=x", tmp_in
         ])
@@ -144,7 +144,7 @@ def safe_convert(
     compress: str = "平衡",
 ) -> tuple[bool, str]:
     """將 MP4/MOV 轉為 GIF（可選 5 秒預覽），並依壓縮等級優化。"""
-    if not command_exists("ffmpeg"):
+    if not command_exists(FFMPEG):
         return False, "系統未找到 ffmpeg，請先安裝後再試。"
 
     preset = _COMPRESS_PRESETS.get(compress, _COMPRESS_PRESETS["平衡"])
@@ -154,13 +154,13 @@ def safe_convert(
     vf_common = f"fps={fps},scale={target_width}:-2:flags=lanczos"
 
     # 先生成 palette（可剪 5 秒預覽）
-    palette_cmd = ["ffmpeg", "-y", "-i", src_mp4, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
+    base_palette_cmd = [FFMPEG, "-y", "-i", src_mp4, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
     if trim_sec and trim_sec > 0:
-        palette_cmd = ["ffmpeg", "-y", "-t", str(trim_sec), "-i", src_mp4, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
+        base_palette_cmd = [FFMPEG, "-y", "-t", str(trim_sec), "-i", src_mp4, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
 
-    ok, err = run_cmd(palette_cmd + ["-frames:v", "99999", palette_path])
+    ok, err = run_cmd(base_palette_cmd + ["-frames:v", "99999", palette_path])
     if not ok:
-        ok2, err2 = run_cmd(palette_cmd + [palette_path])
+        ok2, err2 = run_cmd(base_palette_cmd + [palette_path])
         if not ok2:
             return False, f"palette 生成失敗：{err2 or err}"
 
@@ -175,13 +175,13 @@ def safe_convert(
 
     # 轉出 GIF（可剪 5 秒預覽）
     gif_cmd = [
-        "ffmpeg", "-y", "-i", src_mp4, "-i", palette_path,
+        FFMPEG, "-y", "-i", src_mp4, "-i", palette_path,
         "-lavfi", f"{vf_common}[x];[x][1:v]paletteuse=dither={dither_final}",
         "-gifflags", "+transdiff", "-an", "-hide_banner", out_gif
     ]
     if trim_sec and trim_sec > 0:
         gif_cmd = [
-            "ffmpeg", "-y", "-t", str(trim_sec), "-i", src_mp4, "-i", palette_path,
+            FFMPEG, "-y", "-t", str(trim_sec), "-i", src_mp4, "-i", palette_path,
             "-lavfi", f"{vf_common}[x];[x][1:v]paletteuse=dither={dither_final}",
             "-gifflags", "+transdiff", "-an", "-hide_banner", out_gif
         ]
@@ -211,7 +211,7 @@ def reencode_gif(
     compress: str = "平衡",
 ) -> tuple[bool, str]:
     """將 GIF 重新編碼（可調 FPS / 寬度 / 畫質模式），再依壓縮等級最佳化。"""
-    if not command_exists("ffmpeg"):
+    if not command_exists(FFMPEG):
         return False, "系統未找到 ffmpeg，請先安裝後再試。"
 
     preset = _COMPRESS_PRESETS.get(compress, _COMPRESS_PRESETS["平衡"])
@@ -228,13 +228,13 @@ def reencode_gif(
     palette_path = out_gif + ".palette.png"
 
     # 產生 palette
-    palette_cmd = ["ffmpeg", "-y", "-i", src_gif, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
+    base_palette_cmd = [FFMPEG, "-y", "-i", src_gif, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
     if trim_sec and trim_sec > 0:
-        palette_cmd = ["ffmpeg", "-y", "-t", str(trim_sec), "-i", src_gif, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
+        base_palette_cmd = [FFMPEG, "-y", "-t", str(trim_sec), "-i", src_gif, "-vf", f"{vf_common},palettegen=max_colors={palette_colors}", "-hide_banner"]
 
-    ok, err = run_cmd(palette_cmd + ["-frames:v", "99999", palette_path])
+    ok, err = run_cmd(base_palette_cmd + ["-frames:v", "99999", palette_path])
     if not ok:
-        ok2, err2 = run_cmd(palette_cmd + [palette_path])
+        ok2, err2 = run_cmd(base_palette_cmd + [palette_path])
         if not ok2:
             return False, f"palette 生成失敗：{err2 or err}"
 
@@ -249,13 +249,13 @@ def reencode_gif(
 
     # 重新編碼 GIF
     gif_cmd = [
-        "ffmpeg", "-y", "-i", src_gif, "-i", palette_path,
+        FFMPEG, "-y", "-i", src_gif, "-i", palette_path,
         "-lavfi", f"{vf_common}[x];[x][1:v]paletteuse=dither={dither_final}",
         "-gifflags", "+transdiff", "-an", "-hide_banner", out_gif
     ]
     if trim_sec and trim_sec > 0:
         gif_cmd = [
-            "ffmpeg", "-y", "-t", str(trim_sec), "-i", src_gif, "-i", palette_path,
+            FFMPEG, "-y", "-t", str(trim_sec), "-i", src_gif, "-i", palette_path,
             "-lavfi", f"{vf_common}[x];[x][1:v]paletteuse=dither={dither_final}",
             "-gifflags", "+transdiff", "-an", "-hide_banner", out_gif
         ]
@@ -327,12 +327,11 @@ def instant_estimate_bytes(prev_bytes: int, prev_fps: int, prev_width: int, prev
     dither_ratio = _DITHER_FACTOR.get(new_dither, 1.0) / _DITHER_FACTOR.get(prev_dither, 1.0)
     return float(prev_bytes) * fps_ratio * (width_ratio ** 2) * dither_ratio
 
-# ===================== Streamlit 介面 =====================
+# ===================== 介面 =====================
 
-st.set_page_config(page_title="GIF 轉檔器", layout="wide")
 st.title("🎞 GIF 轉檔器")
 
-# ====== 標題下方備註（20pt） ======
+# 標題下方備註（20pt）
 st.markdown(
     """
     <div style="font-size:20pt; font-weight:600; margin: -6px 0 10px 0;">
@@ -342,7 +341,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# 全域樣式：下載鈕紅底白字 200px；左欄檔名卡片樣式（radio：選取=灰底紅框）；控制列對齊
+# 全域樣式
 st.markdown(
     """
 <style>
@@ -396,7 +395,7 @@ st.markdown(
 /* 被選取時的 hover 仍維持灰底紅框 */
 .file-list .stRadio [role="radio"][aria-checked="true"]:hover {
     background: #f0f0f0 !important;
-    border-color: #ff4b4b !重要;
+    border-color: #ff4b4b !important;
     box-shadow: 0 2px 8px rgba(255,75,75,0.15) !important;
 }
 
@@ -624,7 +623,7 @@ with right:
             ext = Path(target_file.name).suffix.lower()
             is_gif = (ext == ".gif")
 
-            # === 控制列（FPS / 寬度 / 畫質模式 / 壓縮程度）=== 置於同一列（兩種格式相同 UI）
+            # === 控制列（FPS / 寬度 / 畫質模式 / 壓縮程度）===
             st.markdown('<div class="controls">', unsafe_allow_html=True)
             ctl1, ctl2, ctl3, ctl4 = st.columns([2, 2, 3, 3])
 
@@ -695,7 +694,7 @@ with right:
             final_key   = get_final_cache_key(selected_id,   eff["fps"], width_even, eff["dither"], eff["compress"])
             duration    = st.session_state["durations"].get(selected_id)
 
-            # ===== 成品大小：以實際成品 bytes 為準（取代原本「預估大小」） =====
+            # ===== 成品大小：以實際成品 bytes 為準 =====
             size_placeholder = st.empty()
             if final_key in st.session_state["final_cache"]:
                 size_placeholder.markdown(
@@ -704,14 +703,14 @@ with right:
             else:
                 size_placeholder.markdown("**成品大小：計算中…**")
 
-            # 生成 5 秒預覽：兩種來源共用「以當前設定輸出 5 秒」的邏輯
+            # 生成 5 秒預覽
             gif_bytes = None
             if preview_key in st.session_state["preview_cache"]:
                 gif_bytes = st.session_state["preview_cache"][preview_key]
             else:
+                data = target_file.getvalue()
                 if is_gif:
                     with st.spinner("生成 5 秒 GIF 預覽中..."):
-                        data = target_file.getvalue()
                         tmp_in = save_bytes_to_tmp(".gif", data)
                         out_preview = tmp_in.replace(".gif", "_preview.gif")
                         ok, err = reencode_gif(
@@ -741,7 +740,6 @@ with right:
                         except: pass
                 else:
                     with st.spinner("生成 5 秒 GIF 預覽中..."):
-                        data = target_file.getvalue()
                         tmp_in = save_bytes_to_tmp(".mp4", data)
                         out_preview = tmp_in.replace(".mp4", "_preview.gif")
                         ok, err = safe_convert(
@@ -785,9 +783,9 @@ with right:
 
             # === 準備成品（依目前設定）===
             if final_key not in st.session_state["final_cache"]:
+                data = target_file.getvalue()
                 if is_gif:
                     with st.spinner("準備最終 GIF（依目前設定）..."):
-                        data = target_file.getvalue()
                         tmp_in = save_bytes_to_tmp(".gif", data)
                         out_final = tmp_in.replace(".gif", "_final.gif")
                         ok, err = reencode_gif(
@@ -804,7 +802,6 @@ with right:
                                 final_bytes = f.read()
                             st.session_state["final_cache"][final_key] = final_bytes
                             st.session_state["zip_all_bytes"] = None
-                            # ✅ 成品完成後即刻更新大小顯示
                             size_placeholder.markdown(f"**成品大小：{human_size(len(final_bytes))}**")
                         else:
                             st.error(f"{target_file.name} 成品轉檔失敗：{err}")
@@ -814,7 +811,6 @@ with right:
                         except: pass
                 else:
                     with st.spinner("準備最終 GIF（依目前設定）..."):
-                        data = target_file.getvalue()
                         tmp_in = save_bytes_to_tmp(".mp4", data)
                         out_final = tmp_in.replace(".mp4", "_final.gif")
                         ok, err = safe_convert(
@@ -831,7 +827,6 @@ with right:
                                 final_bytes = f.read()
                             st.session_state["final_cache"][final_key] = final_bytes
                             st.session_state["zip_all_bytes"] = None
-                            # ✅ 成品完成後即刻更新大小顯示
                             size_placeholder.markdown(f"**成品大小：{human_size(len(final_bytes))}**")
                         else:
                             st.error(f"{target_file.name} 成品轉檔失敗：{err}")
