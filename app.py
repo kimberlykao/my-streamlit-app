@@ -1,3 +1,11 @@
+import streamlit as st, shutil, subprocess
+st.write("ffmpeg path:", shutil.which("ffmpeg"))
+if shutil.which("ffmpeg"):
+    v = subprocess.check_output(["ffmpeg","-version"]).decode().splitlines()[0]
+    st.success(v)
+else:
+    st.error("ffmpeg not found")
+
 # app.py
 # -*- coding: utf-8 -*-
 import os
