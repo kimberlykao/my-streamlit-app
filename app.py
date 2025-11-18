@@ -322,7 +322,7 @@ h1, h2, h3 {
 if "selected_video_id" not in st.session_state:
     st.session_state["selected_video_id"] = None
 if "global_settings" not in st.session_state:
-    st.session_state["global_settings"] = {"fps": 8, "width": 800, "dither": "bayer", "compress": "平衡"}
+    st.session_state["global_settings"] = {"fps": 10, "width": 800, "dither": "bayer", "compress": "平衡"}
 if "video_settings" not in st.session_state:
     st.session_state["video_settings"] = {}
 if "preview_cache" not in st.session_state:
@@ -508,7 +508,7 @@ with col_right:
 
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # ✅ 重新取得最新設定，確保以下參數用的是使用者剛設定的值
+            # ✅ 重新取得最新設定，確保以下參數使用的是最新的 fps / width / 畫質 / 壓縮
             eff = get_effective_settings(selected_id)
 
             # 準備參數與鍵值
@@ -594,7 +594,7 @@ with col_right:
                             f"**成品大小：{human_size(len(out_bytes))}**"
                         )
 
-            # === 下載單檔（置中 + 200px 寬）===
+            # === 下載單檔（置中）===
             if final_key in st.session_state["final_cache"]:
                 st.markdown('<div class="center">', unsafe_allow_html=True)
                 st.download_button(
