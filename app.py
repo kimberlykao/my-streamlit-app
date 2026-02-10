@@ -82,7 +82,6 @@ def convert_to_gif(input_data, settings, filename):
 
 st.set_page_config(page_title="GIF 4MB 批次轉檔工具", layout="wide")
 
-# 初始化狀態
 if "files_data" not in st.session_state:
     st.session_state["files_data"] = {}
 if "global_config" not in st.session_state:
@@ -102,10 +101,9 @@ with col_preset:
     st.write("2. 快速設定 (點擊後會自動重整頁面)")
     p1, p2, p3 = st.columns(3)
     
-    # 按鈕邏輯：修改後強制 st.rerun()
     def apply_preset(fps, width, style):
         st.session_state["global_config"] = {"fps": fps, "width": width, "style": style}
-        st.session_state["config_ver"] += 1 # 改變版號，強制刷新 UI 數值
+        st.session_state["config_ver"] += 1
         for fid in st.session_state["files_data"]:
             st.session_state["files_data"][fid]['settings'] = st.session_state["global_config"].copy()
         st.rerun()
@@ -121,13 +119,19 @@ st.divider()
 
 # --- 第二層：批次管理 ---
 if uploaded_files:
+    # 同步上傳檔案到 session_state
+    current_fids = []
     for f in uploaded_files:
         fid = hashlib.md5(f.name.encode()).hexdigest()
+        current_fids.append(fid)
         if fid not in st.session_state["files_data"]:
             st.session_state["files_data"][fid] = {
                 "name": f.name, "content": f.getvalue(),
                 "settings": st.session_state["global_config"].copy(), "result": None
             }
+    
+    # 移除已經不在上傳列表中的檔案
+    st.session_state["files_data"] = {fid: info for fid, info in st.session_state["files_data"].items() if fid in current_fids}
 
     if st.button("🚀 開始批次轉檔", type="primary"):
         progress_bar = st.progress(0)
@@ -141,47 +145,13 @@ if uploaded_files:
     for fid, info in st.session_state["files_data"].items():
         c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
         c1.write(f"📄 {info['name']}")
+        
         if info["result"]:
             size = len(info["result"])
             size_str = human_size(size)
             c2.markdown(f"🔴 **{size_str}**" if size > 4*1024*1024 else f"🟢 {size_str}")
-        else:
-            c2.write("⏳ 待轉檔")
-        
-        if c4.button("微調", key=f"btn_{fid}"):
-            st.session_state["editing_now"] = fid
-
-    # ZIP 下載
-    ready_results = {i['name']: i['result'] for i in st.session_state["files_data"].values() if i['result']}
-    if ready_results:
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w") as zf:
-            for n, d in ready_results.items(): zf.writestr(Path(n).stem + ".gif", d)
-        st.download_button("📦 一鍵打包下載全部 GIF", zip_buf.getvalue(), "gifs.zip")
-
-    # --- 第三層：微調區 ---
-    if "editing_now" in st.session_state:
-        fid = st.session_state["editing_now"]
-        info = st.session_state["files_data"][fid]
-        st.divider()
-        st.subheader(f"🛠 正在微調: {info['name']}")
-        
-        # 使用 config_ver 確保滑桿會隨懶人包變動
-        ver = st.session_state["config_ver"]
-        mc1, mc2, mc3 = st.columns(3)
-        with mc1:
-            info['settings']['fps'] = st.slider("流暢度 (FPS)", 1, 30, info['settings']['fps'], key=f"fps_{fid}_{ver}")
-        with mc2:
-            info['settings']['width'] = st.number_input("寬度 (px)", 100, 1200, info['settings']['width'], step=10, key=f"w_{fid}_{ver}")
-        with mc3:
-            info['settings']['style'] = st.selectbox("畫質風格", ["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"], 
-                                                     index=["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"].index(info['settings']['style']), key=f"s_{fid}_{ver}")
-        
-        if st.button("套用並單獨預覽", key=f"apply_{fid}"):
-            ok, res, err = convert_to_gif(info["content"], info['settings'], info['name'])
-            if ok:
-                info["result"] = res
-                st.image(res, caption=f"預覽: {human_size(len(res))}")
-            else: st.error(err)
-else:
-    st.info("請上傳影片以開始。")
+            
+            # ⭐ 核心修正：如果只有一個檔案，直接顯示下載按鈕與預覽
+            if len(st.session_state["files_data"]) == 1:
+                st.download_button("💾 下載此 GIF", info["result"], f"{Path(info['name']).stem}.gif", key=f"dl_{fid}")
+                st.image(info["result"], caption=f"目前預覽 ({size_str})")
