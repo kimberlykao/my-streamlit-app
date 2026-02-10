@@ -89,7 +89,7 @@ if "global_config" not in st.session_state:
 if "config_ver" not in st.session_state:
     st.session_state["config_ver"] = 0
 
-st.title("🎬 GIF 批次壓縮轉檔 (4MB 達標工具)")
+st.title("🎬 GIF 批次壓縮轉檔 ")
 
 # --- 第一層：上傳與懶人包 ---
 col_up, col_preset = st.columns([1, 1])
