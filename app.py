@@ -8,21 +8,18 @@ import tempfile
 import subprocess
 import hashlib
 from pathlib import Path
-
 import streamlit as st
 
-# ===================== 公用工具 =====================
+# ===================== 工具函式 =====================
 
 def human_size(num_bytes: int) -> str:
-    try:
-        num_bytes = float(num_bytes)
-    except Exception:
-        num_bytes = 0.0
-    for unit in ["B", "KB", "MB", "GB", "TB"]:
-        if num_bytes < 1024.0:
-            return f"{num_bytes:.2f} {unit}"
-        num_bytes /= 1024.0
-    return f"{num_bytes:.2f} PB"
+    if num_bytes < 1024.0:
+        return f"{num_bytes:.2f} B"
+    num_bytes /= 1024.0
+    if num_bytes < 1024.0:
+        return f"{num_bytes:.2f} KB"
+    num_bytes /= 1024.0
+    return f"{num_bytes:.2f} MB"
 
 def command_exists(cmd: str) -> bool:
     return shutil.which(cmd) is not None
@@ -30,189 +27,181 @@ def command_exists(cmd: str) -> bool:
 def run_cmd(cmd: list) -> tuple[bool, str]:
     try:
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, text=True)
-        if p.returncode == 0:
-            return True, p.stdout
-        else:
-            return False, p.stderr
+        return (p.returncode == 0, p.stdout if p.returncode == 0 else p.stderr)
     except Exception as e:
         return False, str(e)
 
-# ========== ffmpeg / gifsicle 指令查找 ==========
+FFMPEG_PATH = "ffmpeg" if command_exists("ffmpeg") else ""
 
-def find_ffmpeg() -> str:
-    if command_exists("ffmpeg"):
-        return "ffmpeg"
-    return ""
+# ==================== 核心轉檔邏輯 ====================
 
-def find_gifsicle() -> str:
-    if command_exists("gifsicle"):
-        return "gifsicle"
-    return ""
+def convert_to_gif(input_data, settings, filename):
+    if not FFMPEG_PATH:
+        return False, None, "系統未安裝 ffmpeg"
 
-FFMPEG_PATH = find_ffmpeg()
-GIFSICLE_PATH = find_gifsicle()
-FFMPEG_AVAILABLE = bool(FFMPEG_PATH)
-GIFSICLE_AVAILABLE = bool(GIFSICLE_PATH)
-
-# ==================== 轉檔邏輯 ====================
-
-def safe_convert(
-    input_data: bytes,
-    fps: int,
-    target_width: int,
-    dither: str,
-    compress: str,
-    is_gif: bool,
-) -> tuple[bool, bytes | None, str]:
-    if not FFMPEG_AVAILABLE:
-        return False, None, "系統未安裝 ffmpeg，無法轉檔。"
-
-    tmp_dir = tempfile.mkdtemp(prefix="gifconv_")
-    input_path = os.path.join(tmp_dir, "input")
-    input_path += ".gif" if is_gif else ".mp4"
+    tmp_dir = tempfile.mkdtemp(prefix="gif_")
+    input_path = os.path.join(tmp_dir, "in_" + filename)
+    palette_path = os.path.join(tmp_dir, "palette.png")
     output_path = os.path.join(tmp_dir, "out.gif")
 
     try:
         with open(input_path, "wb") as f:
             f.write(input_data)
 
-        scale_filter = f"scale={target_width}:-1:flags=lanczos"
+        # 根據白話選項轉換為技術參數
+        fps = settings['fps']
+        width = settings['width']
+        
+        # 畫質風格對應
+        style = settings['style']
+        if style == "細膩 (檔案大)":
+            dither = "sierra2_4a"
+            colors = 256
+        elif style == "標準 (推薦)":
+            dither = "bayer"
+            colors = 128
+        else: # 復古 (小體積)
+            dither = "none"
+            colors = 64
 
-        dither_option = (
-            "dither=none" if dither == "none"
-            else "dither=sierra2_4a" if dither == "sierra2_4a"
-            else "dither=bayer"
-        )
-
-        max_colors = (
-            128 if compress == "保守"
-            else 80 if compress == "強化"
-            else 64 if compress == "激進"
-            else 96
-        )
-
-        palette_path = os.path.join(tmp_dir, "palette.png")
-        ok, err = run_cmd([
+        # 1. 生成調色盤
+        cmd_palette = [
             FFMPEG_PATH, "-y", "-i", input_path,
-            "-vf", f"{scale_filter},fps={fps},palettegen=max_colors={max_colors}",
+            "-vf", f"fps={fps},scale={width}:-1:flags=lanczos,palettegen=max_colors={colors}",
             palette_path
-        ])
-        if not ok:
-            return False, None, f"建立調色盤失敗：\n{err}"
+        ]
+        run_cmd(cmd_palette)
 
-        ok, err = run_cmd([
-            FFMPEG_PATH, "-y",
-            "-i", input_path, "-i", palette_path,
-            "-lavfi", f"{scale_filter},fps={fps},paletteuse={dither_option}",
-            "-loop", "0",
+        # 2. 轉檔
+        cmd_conv = [
+            FFMPEG_PATH, "-y", "-i", input_path, "-i", palette_path,
+            "-lavfi", f"fps={fps},scale={width}:-1:flags=lanczos [x]; [x][1:v] paletteuse=dither={dither}",
             output_path
-        ])
-        if not ok:
-            return False, None, f"轉檔 GIF 失敗：\n{err}"
-
-        with open(output_path, "rb") as f:
-            return True, f.read(), ""
-
-    except Exception as e:
-        return False, None, str(e)
+        ]
+        ok, err = run_cmd(cmd_conv)
+        
+        if ok:
+            with open(output_path, "rb") as f:
+                return True, f.read(), ""
+        return False, None, err
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-def reencode_gif(
-    gif_bytes: bytes,
-    fps: int,
-    target_width: int,
-    dither: str,
-    compress: str,
-) -> tuple[bool, bytes | None, str]:
-    return safe_convert(gif_bytes, fps, target_width, dither, compress, True)
+# ==================== Streamlit 介面 ====================
 
-# ==================== Streamlit 狀態 ====================
+st.set_page_config(page_title="GIF 4MB 批次轉檔工具", layout="wide")
 
-st.set_page_config(page_title="GIF 轉檔工具", layout="wide")
+# 初始化狀態
+if "files_data" not in st.session_state:
+    st.session_state["files_data"] = {} # {file_id: {settings, result_bytes}}
+if "global_config" not in st.session_state:
+    st.session_state["global_config"] = {"fps": 10, "width": 480, "style": "標準 (推薦)"}
 
-if "global_settings" not in st.session_state:
-    st.session_state["global_settings"] = {"fps": 10, "width": 800, "dither": "bayer", "compress": "平衡"}
-if "video_settings" not in st.session_state:
-    st.session_state["video_settings"] = {}
-if "final_cache" not in st.session_state:
-    st.session_state["final_cache"] = {}
-if "zip_bytes" not in st.session_state:
-    st.session_state["zip_bytes"] = None
+st.title("🎬 GIF 批次壓縮轉檔 (4MB 達標工具)")
 
-def get_effective_settings(video_id: str) -> dict:
-    g = st.session_state["global_settings"]
-    v = st.session_state["video_settings"].get(video_id, {})
-    return {
-        "fps": v.get("fps", g["fps"]),
-        "width": v.get("width", g["width"]),
-        "dither": v.get("dither", g["dither"]),
-        "compress": v.get("compress", g["compress"]),
-    }
+# --- 第一層：上傳與懶人包 ---
+col_up, col_preset = st.columns([1, 1])
 
-def update_video_setting(video_id: str, key: str, value):
-    st.session_state["video_settings"].setdefault(video_id, {})[key] = value
+with col_up:
+    uploaded_files = st.file_uploader("1. 上傳影片", type=["mp4", "mov", "m4v", "gif"], accept_multiple_files=True)
 
-def generate_video_id(file) -> str:
-    raw = f"{file.name}:{file.size}".encode()
-    return hashlib.md5(raw).hexdigest()
+with col_preset:
+    st.write("2. 快速設定 (一鍵套用全部)")
+    p1, p2, p3 = st.columns(3)
+    if p1.button("✅ 安全標準包\n(480px / 10FPS)"):
+        st.session_state["global_config"] = {"fps": 10, "width": 480, "style": "標準 (推薦)"}
+        for fid in st.session_state["files_data"]:
+            st.session_state["files_data"][fid]['settings'] = st.session_state["global_config"].copy()
+        st.rerun()
+    if p2.button("🎈 極度輕巧包\n(320px / 8FPS)"):
+        st.session_state["global_config"] = {"fps": 8, "width": 320, "style": "復古 (小體積)"}
+        for fid in st.session_state["files_data"]:
+            st.session_state["files_data"][fid]['settings'] = st.session_state["global_config"].copy()
+        st.rerun()
+    if p3.button("💎 高畫質包\n(640px / 12FPS)"):
+        st.session_state["global_config"] = {"fps": 12, "width": 640, "style": "細膩 (檔案大)"}
+        for fid in st.session_state["files_data"]:
+            st.session_state["files_data"][fid]['settings'] = st.session_state["global_config"].copy()
+        st.rerun()
 
-def apply_settings_to_all(source_id, files):
-    source = get_effective_settings(source_id)
-    for f in files:
-        vid = generate_video_id(f)
-        st.session_state["video_settings"][vid] = source.copy()
+st.divider()
 
-# ==================== UI ====================
+# --- 第二層：批次管理與轉檔 ---
+if uploaded_files:
+    st.subheader("3. 檔案清單與進度")
+    
+    # 初始化上傳的檔案
+    for f in uploaded_files:
+        fid = hashlib.md5(f.name.encode()).hexdigest()
+        if fid not in st.session_state["files_data"]:
+            st.session_state["files_data"][fid] = {
+                "name": f.name,
+                "content": f.getvalue(),
+                "settings": st.session_state["global_config"].copy(),
+                "result": None
+            }
 
-st.title("GIF 轉檔工具")
+    # 批次轉檔按鈕
+    if st.button("🚀 開始批次轉檔", type="primary"):
+        progress_bar = st.progress(0)
+        for i, (fid, info) in enumerate(st.session_state["files_data"].items()):
+            ok, res, err = convert_to_gif(info["content"], info["settings"], info["name"])
+            if ok:
+                st.session_state["files_data"][fid]["result"] = res
+            progress_bar.progress((i + 1) / len(st.session_state["files_data"]))
+        st.success("全部處理完成！")
 
-col_left, col_right = st.columns([1.1, 1.9])
+    # 列表顯示
+    for fid, info in st.session_state["files_data"].items():
+        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+        c1.write(f"📄 {info['name']}")
+        
+        # 體積監控
+        if info["result"]:
+            size = len(info["result"])
+            size_str = human_size(size)
+            if size > 4 * 1024 * 1024:
+                c2.markdown(f"🔴 **{size_str} (超過 4MB)**")
+            else:
+                c2.markdown(f"🟢 {size_str}")
+        else:
+            c2.write("等待轉檔...")
 
-with col_left:
-    uploaded_files = st.file_uploader(
-        "上傳影片或 GIF（可多個）",
-        type=["mp4", "mov", "m4v", "gif"],
-        accept_multiple_files=True,
-    )
+        if c4.button("微調", key=f"edit_{fid}"):
+            st.session_state["editing_now"] = fid
 
-    selected_file = None
-    selected_id = None
+    # 下載全部 ZIP
+    ready_files = {info['name']: info['result'] for info in st.session_state["files_data"].values() if info['result']}
+    if ready_files:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            for name, data in ready_files.items():
+                zf.writestr(Path(name).stem + ".gif", data)
+        st.download_button("📦 一鍵打包下載全部 GIF", zip_buffer.getvalue(), "all_gifs.zip", "application/zip")
 
-    if uploaded_files:
-        name = st.selectbox("選擇要轉檔的檔案", [f.name for f in uploaded_files])
-        selected_file = next(f for f in uploaded_files if f.name == name)
-        selected_id = generate_video_id(selected_file)
-
-with col_right:
-    if uploaded_files and selected_file:
-        eff = get_effective_settings(selected_id)
-
-        st.subheader("轉檔設定")
-
-        # ⭐ 新增的一鍵套用按鈕（唯一 UI 變動）
-        if st.button("一鍵套用目前設定到所有檔案"):
-            apply_settings_to_all(selected_id, uploaded_files)
-            st.success("已套用到所有檔案")
-
-        c1, c2 = st.columns(2)
-        with c1:
-            fps = st.slider("FPS", 1, 20, eff["fps"])
-            update_video_setting(selected_id, "fps", fps)
-
-            width = st.number_input("寬度（px）", 100, 1920, eff["width"], step=2)
-            width -= width % 2
-            update_video_setting(selected_id, "width", width)
-
-        with c2:
-            dither = st.selectbox("畫質模式", ["none", "bayer", "sierra2_4a"], index=["none","bayer","sierra2_4a"].index(eff["dither"]))
-            update_video_setting(selected_id, "dither", dither)
-
-            compress = st.selectbox("壓縮程度", ["保守","平衡","強化","激進"], index=["保守","平衡","強化","激進"].index(eff["compress"]))
-            update_video_setting(selected_id, "compress", compress)
-
-        data = selected_file.getvalue()
-        ok, gif_bytes, err = safe_convert(data, fps, width, dither, compress, selected_file.name.endswith(".gif"))
-        if ok:
-            st.image(gif_bytes)
-            st.download_button("下載 GIF", gif_bytes, f"{Path(selected_file.name).stem}.gif", "image/gif")
+    # --- 第三層：個別微調區 ---
+    if "editing_now" in st.session_state:
+        fid = st.session_state["editing_now"]
+        info = st.session_state["files_data"][fid]
+        st.divider()
+        st.subheader(f"🛠 正在微調: {info['name']}")
+        
+        mc1, mc2, mc3 = st.columns(3)
+        with mc1:
+            new_fps = st.slider("畫面流暢度 (FPS)", 1, 30, info['settings']['fps'], key=f"fps_{fid}")
+        with mc2:
+            new_width = st.number_input("寬度 (px)", 100, 1200, info['settings']['width'], step=10, key=f"w_{fid}")
+        with mc3:
+            new_style = st.selectbox("畫質風格", ["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"], 
+                                   index=["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"].index(info['settings']['style']), key=f"s_{fid}")
+        
+        if st.button("套用並單獨預覽"):
+            info['settings'] = {"fps": new_fps, "width": new_width, "style": new_style}
+            ok, res, err = convert_to_gif(info["content"], info['settings'], info['name'])
+            if ok:
+                info["result"] = res
+                st.image(res, caption=f"預覽: {human_size(len(res))}")
+            else:
+                st.error(err)
+else:
+    st.info("請先上傳影片，開始你的 GIF 製作旅程。")
