@@ -92,13 +92,13 @@ if "config_ver" not in st.session_state:
 st.title("🎬 GIF 批次壓縮轉檔 ")
 
 # --- 第一層：上傳與懶人包 ---
-col_up, col_preset = st.columns([1, 1])
+col_up, col_preset = st.columns([1, 1.2])
 
 with col_up:
     uploaded_files = st.file_uploader("1. 上傳影片", type=["mp4", "mov", "m4v", "gif"], accept_multiple_files=True)
 
 with col_preset:
-    st.write("2. 快速設定 (點擊後會自動重整頁面)")
+    st.write("2. 快速預設 (點擊後自動同步下方數值)")
     p1, p2, p3 = st.columns(3)
     
     def apply_preset(fps, width, style):
@@ -119,7 +119,7 @@ st.divider()
 
 # --- 第二層：批次管理 ---
 if uploaded_files:
-    # 同步上傳檔案到 session_state
+    # 同步檔案
     current_fids = []
     for f in uploaded_files:
         fid = hashlib.md5(f.name.encode()).hexdigest()
@@ -130,28 +130,81 @@ if uploaded_files:
                 "settings": st.session_state["global_config"].copy(), "result": None
             }
     
-    # 移除已經不在上傳列表中的檔案
+    # 清理已刪除檔案
     st.session_state["files_data"] = {fid: info for fid, info in st.session_state["files_data"].items() if fid in current_fids}
 
-    if st.button("🚀 開始批次轉檔", type="primary"):
+    # 轉檔與下載按鈕列
+    bc1, bc2 = st.columns([1, 1])
+    with bc1:
+        start_btn = st.button("🚀 開始批次轉檔", type="primary", use_container_width=True)
+    with bc2:
+        ready_results = {i['name']: i['result'] for i in st.session_state["files_data"].values() if i['result']}
+        if len(ready_results) > 1:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                for n, d in ready_results.items(): zf.writestr(Path(n).stem + ".gif", d)
+            st.download_button("📦 打包下載全部 (ZIP)", zip_buf.getvalue(), "all_gifs.zip", use_container_width=True)
+
+    if start_btn:
         progress_bar = st.progress(0)
         for i, (fid, info) in enumerate(st.session_state["files_data"].items()):
             ok, res, err = convert_to_gif(info["content"], info["settings"], info["name"])
             if ok: st.session_state["files_data"][fid]["result"] = res
             progress_bar.progress((i + 1) / len(st.session_state["files_data"]))
-        st.success("全部處理完成！")
+        st.success("全部轉檔完成！")
 
     # 顯示清單
+    st.write("---")
     for fid, info in st.session_state["files_data"].items():
-        c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
-        c1.write(f"📄 {info['name']}")
-        
-        if info["result"]:
-            size = len(info["result"])
-            size_str = human_size(size)
-            c2.markdown(f"🔴 **{size_str}**" if size > 4*1024*1024 else f"🟢 {size_str}")
+        with st.container():
+            # 檔名、大小、按鈕 分配空間
+            c1, c2, c3 = st.columns([4, 2, 1])
+            c1.write(f"📄 {info['name']}")
             
-            # ⭐ 核心修正：如果只有一個檔案，直接顯示下載按鈕與預覽
-            if len(st.session_state["files_data"]) == 1:
-                st.download_button("💾 下載此 GIF", info["result"], f"{Path(info['name']).stem}.gif", key=f"dl_{fid}")
-                st.image(info["result"], caption=f"目前預覽 ({size_str})")
+            if info["result"]:
+                size = len(info["result"])
+                size_str = human_size(size)
+                c2.markdown(f"🔴 **{size_str}**" if size > 4*1024*1024 else f"🟢 {size_str}")
+            else:
+                c2.write("⏳ 待轉檔")
+            
+            # 微調按鈕
+            if c3.button("⚙️ 微調", key=f"edit_btn_{fid}"):
+                st.session_state["editing_now"] = fid
+
+            # 如果只有一個檔案且已轉檔，直接秀出預覽與下載
+            if len(st.session_state["files_data"]) == 1 and info["result"]:
+                st.image(info["result"], caption=f"預覽: {human_size(len(info['result']))}", width=400)
+                st.download_button("💾 下載 GIF", info["result"], f"{Path(info['name']).stem}.gif", key=f"dl_single_{fid}")
+        st.write("") # 增加間隔
+
+    # --- 第三層：微調區 ---
+    if "editing_now" in st.session_state:
+        fid = st.session_state["editing_now"]
+        if fid in st.session_state["files_data"]:
+            info = st.session_state["files_data"][fid]
+            st.markdown(f"### 🛠 正在調整: {info['name']}")
+            
+            ver = st.session_state["config_ver"]
+            mc1, mc2, mc3, mc4 = st.columns([2, 2, 2, 1])
+            with mc1:
+                info['settings']['fps'] = st.slider("流暢度 (FPS)", 1, 30, info['settings']['fps'], key=f"fps_{fid}_{ver}")
+            with mc2:
+                info['settings']['width'] = st.number_input("寬度 (px)", 100, 1200, info['settings']['width'], step=10, key=f"w_{fid}_{ver}")
+            with mc3:
+                info['settings']['style'] = st.selectbox("畫質風格", ["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"], 
+                                                        index=["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"].index(info['settings']['style']), key=f"s_{fid}_{ver}")
+            with mc4:
+                st.write("") # 為了對齊
+                if st.button("套用", key=f"apply_{fid}", type="primary"):
+                    ok, res, err = convert_to_gif(info["content"], info['settings'], info['name'])
+                    if ok:
+                        info["result"] = res
+                        st.rerun()
+                    else: st.error(err)
+            
+            # 微調時顯示該檔預覽
+            if info["result"]:
+                st.image(info["result"], width=300)
+else:
+    st.info("👋 你好！請上傳 MP4 影片，我們會幫你把它變成 4MB 以內的 GIF。")
