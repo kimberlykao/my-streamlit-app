@@ -97,7 +97,7 @@ if "files_data" not in st.session_state:
 if "global_config" not in st.session_state:
     st.session_state["global_config"] = {"fps": 10, "width": 480, "style": "標準 (推薦)"}
 
-st.title("🎬 GIF 批次壓縮轉檔 (4MB 達標工具)")
+st.title("🎬 GIF 批次壓縮轉檔 ")
 
 # --- 第一層：上傳與懶人包 ---
 col_up, col_preset = st.columns([1, 1])
