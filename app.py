@@ -88,6 +88,8 @@ if "global_config" not in st.session_state:
     st.session_state["global_config"] = {"fps": 10, "width": 480, "style": "標準 (推薦)"}
 if "config_ver" not in st.session_state:
     st.session_state["config_ver"] = 0
+if "editing_now" not in st.session_state:
+    st.session_state["editing_now"] = None
 
 st.title("🎬 GIF 批次壓縮轉檔")
 
@@ -121,6 +123,10 @@ if uploaded_files:
         if fid in current_fids
     }
 
+    # 若目前編輯中的檔案被移除，清空選取
+    if st.session_state["editing_now"] not in st.session_state["files_data"]:
+        st.session_state["editing_now"] = None
+
     # 轉檔與下載按鈕列
     bc1, bc2 = st.columns([1, 1])
     with bc1:
@@ -153,10 +159,11 @@ if uploaded_files:
             progress_bar.progress((i + 1) / len(st.session_state["files_data"]))
         st.success("全部轉檔完成！")
 
-    # 顯示清單（每支已轉檔都可下載 + 顯示縮圖預覽）
+    # 顯示清單
     st.write("---")
     for fid, info in st.session_state["files_data"].items():
         with st.container():
+            # 檔名、大小、微調、下載
             c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
             c1.write(f"📄 {info['name']}")
 
@@ -169,6 +176,7 @@ if uploaded_files:
 
             if c3.button("⚙️ 微調", key=f"edit_btn_{fid}"):
                 st.session_state["editing_now"] = fid
+                st.rerun()
 
             if info["result"]:
                 c4.download_button(
@@ -182,54 +190,74 @@ if uploaded_files:
             else:
                 c4.write("")
 
-            # 多檔也顯示縮圖預覽
+            # 每支影片預覽改成摺疊/展開
             if info["result"]:
-                preview_col1, preview_col2 = st.columns([1.2, 2.8])
-                with preview_col1:
-                    st.image(info["result"], caption=f"預覽 ({human_size(len(info['result']))})", width=220)
-                with preview_col2:
-                    st.caption("已完成轉檔，可直接下載或點選「⚙️ 微調」調整參數後重新套用。")
+                is_editing_this = (st.session_state["editing_now"] == fid)
+                with st.expander("👀 預覽", expanded=is_editing_this):
+                    pv1, pv2 = st.columns([1.2, 2.8])
+                    with pv1:
+                        st.image(
+                            info["result"],
+                            caption=f"預覽 ({human_size(len(info['result']))})",
+                            width=220
+                        )
+                    with pv2:
+                        st.caption("可直接下載，或點「⚙️ 微調」調整後重新轉檔。")
+
+            # 微調區直接出現在該影片下方（只顯示目前選中的）
+            if st.session_state["editing_now"] == fid:
+                st.markdown(f"### 🛠 正在調整: {info['name']}")
+
+                ver = st.session_state["config_ver"]
+                mc1, mc2, mc3, mc4, mc5 = st.columns([2, 2, 2, 1, 1])
+
+                with mc1:
+                    info["settings"]["fps"] = st.slider(
+                        "流暢度 (FPS)",
+                        1, 30,
+                        info["settings"]["fps"],
+                        key=f"fps_{fid}_{ver}"
+                    )
+
+                with mc2:
+                    info["settings"]["width"] = st.number_input(
+                        "寬度 (px)",
+                        100, 1200,
+                        info["settings"]["width"],
+                        step=10,
+                        key=f"w_{fid}_{ver}"
+                    )
+
+                with mc3:
+                    styles = ["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"]
+                    info["settings"]["style"] = st.selectbox(
+                        "畫質風格",
+                        styles,
+                        index=styles.index(info["settings"]["style"]),
+                        key=f"s_{fid}_{ver}"
+                    )
+
+                with mc4:
+                    st.write("")
+                    if st.button("套用", key=f"apply_{fid}", type="primary", use_container_width=True):
+                        ok, res, err = convert_to_gif(info["content"], info["settings"], info["name"])
+                        if ok:
+                            info["result"] = res
+                            st.rerun()
+                        else:
+                            st.error(err)
+
+                with mc5:
+                    st.write("")
+                    if st.button("關閉", key=f"close_edit_{fid}", use_container_width=True):
+                        st.session_state["editing_now"] = None
+                        st.rerun()
+
+                # 微調區預覽（讓使用者不用再往上找）
+                if info["result"]:
+                    st.image(info["result"], width=320, caption="微調預覽")
 
         st.write("")
 
-    # --- 第三層：微調區 ---
-    if "editing_now" in st.session_state:
-        fid = st.session_state["editing_now"]
-        if fid in st.session_state["files_data"]:
-            info = st.session_state["files_data"][fid]
-            st.markdown(f"### 🛠 正在調整: {info['name']}")
-
-            ver = st.session_state["config_ver"]
-            mc1, mc2, mc3, mc4 = st.columns([2, 2, 2, 1])
-
-            with mc1:
-                info["settings"]["fps"] = st.slider(
-                    "流暢度 (FPS)", 1, 30, info["settings"]["fps"], key=f"fps_{fid}_{ver}"
-                )
-            with mc2:
-                info["settings"]["width"] = st.number_input(
-                    "寬度 (px)", 100, 1200, info["settings"]["width"], step=10, key=f"w_{fid}_{ver}"
-                )
-            with mc3:
-                styles = ["細膩 (檔案大)", "標準 (推薦)", "復古 (小體積)"]
-                info["settings"]["style"] = st.selectbox(
-                    "畫質風格",
-                    styles,
-                    index=styles.index(info["settings"]["style"]),
-                    key=f"s_{fid}_{ver}",
-                )
-            with mc4:
-                st.write("")  # 對齊
-                if st.button("套用", key=f"apply_{fid}", type="primary"):
-                    ok, res, err = convert_to_gif(info["content"], info["settings"], info["name"])
-                    if ok:
-                        info["result"] = res
-                        st.rerun()
-                    else:
-                        st.error(err)
-
-            # 微調區預覽
-            if info["result"]:
-                st.image(info["result"], width=320, caption="微調預覽")
 else:
     st.info("👋 你好！請上傳 MP4 影片，我們會幫你把它變成 4MB 以內的 GIF。")
