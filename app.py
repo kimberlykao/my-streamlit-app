@@ -1,4 +1,3 @@
-```python
 # app.py
 # -*- coding: utf-8 -*-
 import os
@@ -234,4 +233,3 @@ if uploaded_files:
                 st.image(info["result"], width=320, caption="微調預覽")
 else:
     st.info("👋 你好！請上傳 MP4 影片，我們會幫你把它變成 4MB 以內的 GIF。")
-
