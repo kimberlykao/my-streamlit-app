@@ -234,6 +234,4 @@ if uploaded_files:
                 st.image(info["result"], width=320, caption="微調預覽")
 else:
     st.info("👋 你好！請上傳 MP4 影片，我們會幫你把它變成 4MB 以內的 GIF。")
-```
 
-如果你要，我下一版可以再幫你加「每支影片預覽摺疊/展開」功能，避免多檔時頁面太長。
