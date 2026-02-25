@@ -13,9 +13,11 @@ import streamlit as st
 # ===================== 工具函式 =====================
 
 def human_size(num_bytes: int) -> str:
-    if num_bytes < 1024.0: return f"{num_bytes:.2f} B"
+    if num_bytes < 1024.0:
+        return f"{num_bytes:.2f} B"
     num_bytes /= 1024.0
-    if num_bytes < 1024.0: return f"{num_bytes:.2f} KB"
+    if num_bytes < 1024.0:
+        return f"{num_bytes:.2f} KB"
     num_bytes /= 1024.0
     return f"{num_bytes:.2f} MB"
 
@@ -31,60 +33,60 @@ def run_cmd(cmd: list) -> tuple[bool, str]:
 
 FFMPEG_PATH = "ffmpeg" if command_exists("ffmpeg") else ""
 
-# ===================== 視覺樣式 =====================
+# ===================== 視覺樣式（極簡版） =====================
 
 def inject_styles():
     st.markdown("""
     <style>
     .stApp {
-        background: linear-gradient(180deg, #f6f8fb 0%, #eef3f8 100%);
+        background: #f5f7fb;
     }
 
     .hero-box {
-        background: linear-gradient(135deg, #ffffff 0%, #f7fbff 100%);
-        border: 1px solid #dbe7f3;
-        border-radius: 16px;
-        padding: 14px 18px;
-        margin-bottom: 10px;
-        box-shadow: 0 4px 14px rgba(27, 53, 87, 0.06);
+        background: #ffffff;
+        border: 1px solid #e7edf5;
+        border-radius: 14px;
+        padding: 10px 14px;
+        margin-bottom: 6px;
+        box-shadow: 0 1px 4px rgba(27, 53, 87, 0.03);
     }
 
     .panel {
         background: #ffffff;
-        border: 1px solid #e3eaf2;
-        border-radius: 14px;
-        padding: 12px 14px;
-        margin: 8px 0;
-        box-shadow: 0 2px 8px rgba(27, 53, 87, 0.04);
+        border: 1px solid #e8eef5;
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin: 6px 0;
+        box-shadow: none;
     }
 
     .panel-soft {
-        background: #f8fbff;
-        border: 1px solid #dceaf8;
-        border-radius: 14px;
-        padding: 12px 14px;
-        margin: 8px 0;
+        background: #fafcff;
+        border: 1px solid #e9f0f7;
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin: 6px 0;
     }
 
     .file-card {
         background: #ffffff;
-        border: 1px solid #e1e8f0;
-        border-left: 5px solid #9cb8d6;
-        border-radius: 14px;
-        padding: 12px 14px 8px 14px;
-        margin: 10px 0;
-        box-shadow: 0 3px 10px rgba(27, 53, 87, 0.04);
+        border: 1px solid #e6edf4;
+        border-left: 4px solid #bfd2e8;
+        border-radius: 12px;
+        padding: 10px 12px 6px 12px;
+        margin: 8px 0;
+        box-shadow: none;
     }
 
     .file-card.editing {
-        border-left-color: #2c7be5;
-        background: #f7fbff;
+        border-left-color: #4a90e2;
+        background: #fbfdff;
     }
 
     .edit-panel {
-        background: #eef6ff;
-        border: 1px solid #cfe2fb;
-        border-radius: 12px;
+        background: #f7fbff;
+        border: 1px solid #dce9f8;
+        border-radius: 10px;
         padding: 10px 12px;
         margin-top: 8px;
     }
@@ -93,45 +95,45 @@ def inject_styles():
         display: inline-block;
         padding: 4px 10px;
         border-radius: 999px;
-        font-size: 0.86rem;
+        font-size: 0.84rem;
         font-weight: 600;
         border: 1px solid transparent;
     }
 
     .status-wait {
-        background: #f3f6fa;
-        color: #526170;
-        border-color: #dce4ec;
+        background: #f5f7fa;
+        color: #5e6a78;
+        border-color: #e2e8ef;
     }
 
     .status-ok {
-        background: #ecfbf1;
-        color: #1f7a3d;
-        border-color: #bfe9cc;
+        background: #eef9f1;
+        color: #23663b;
+        border-color: #cae9d4;
     }
 
     .status-big {
-        background: #fff4ef;
-        color: #b54708;
-        border-color: #f4cfbd;
+        background: #fff7f2;
+        color: #a85a1f;
+        border-color: #f1dac8;
     }
 
     div[data-testid="stExpander"] {
-        border: 1px solid #e2eaf2 !important;
-        border-radius: 12px !important;
-        background: #fbfdff;
+        border: 1px solid #e8eef5 !important;
+        border-radius: 10px !important;
+        background: #fcfdff;
     }
 
     div[data-testid="stMetric"] {
         background: #ffffff;
-        border: 1px solid #e3eaf2;
-        border-radius: 12px;
-        padding: 8px 10px;
+        border: 1px solid #e8eef5;
+        border-radius: 10px;
+        padding: 6px 8px;
     }
 
     .small-note {
-        color: #5f6b7a;
-        font-size: 0.92rem;
+        color: #667382;
+        font-size: 0.9rem;
         margin-top: 2px;
     }
     </style>
@@ -214,19 +216,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 第一層：上傳（已移除快速預設區塊） ---
-st.markdown('<div class="panel-soft">', unsafe_allow_html=True)
+# 上傳區（不再用空白 panel-soft 包住，避免多餘色塊）
 uploaded_files = st.file_uploader(
     "1. 上傳影片",
     type=["mp4", "mov", "m4v", "gif"],
     accept_multiple_files=True
 )
-st.markdown("</div>", unsafe_allow_html=True)
 
 st.divider()
 
-# --- 第二層：批次管理 ---
 if uploaded_files:
+    # 同步檔案
     current_fids = []
     for f in uploaded_files:
         fid = hashlib.md5(f.name.encode()).hexdigest()
@@ -239,6 +239,7 @@ if uploaded_files:
                 "result": None
             }
 
+    # 清理刪除的檔案
     st.session_state["files_data"] = {
         fid: info for fid, info in st.session_state["files_data"].items()
         if fid in current_fids
@@ -249,11 +250,13 @@ if uploaded_files:
 
     ready_results = {i["name"]: i["result"] for i in st.session_state["files_data"].values() if i["result"]}
 
-    # 工具列（有功能才用白框；這裡至少有開始轉檔按鈕，所以保留）
+    # 工具列（有實際功能）
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     bc1, bc2 = st.columns([1, 1])
+
     with bc1:
         start_btn = st.button("🚀 開始批次轉檔", type="primary", use_container_width=True)
+
     with bc2:
         if len(ready_results) > 1:
             zip_buf = io.BytesIO()
@@ -267,6 +270,7 @@ if uploaded_files:
                 mime="application/zip",
                 use_container_width=True
             )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     if start_btn:
@@ -281,29 +285,35 @@ if uploaded_files:
         st.success("全部轉檔完成！")
 
     st.write("---")
+
+    # 檔案清單
     for fid, info in st.session_state["files_data"].items():
         is_editing_this = (st.session_state["editing_now"] == fid)
         card_class = "file-card editing" if is_editing_this else "file-card"
         st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
 
         c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
-        c1.write(f"📄 {info['name']}")
-        c2.markdown(render_status_chip(info), unsafe_allow_html=True)
 
-        if c3.button("⚙️ 微調", key=f"edit_btn_{fid}"):
-            st.session_state["editing_now"] = fid
-            st.rerun()
+        with c1:
+            st.write(f"📄 {info['name']}")
+        with c2:
+            st.markdown(render_status_chip(info), unsafe_allow_html=True)
+        with c3:
+            if st.button("⚙️ 微調", key=f"edit_btn_{fid}"):
+                st.session_state["editing_now"] = fid
+                st.rerun()
+        with c4:
+            if info["result"]:
+                st.download_button(
+                    "💾 下載",
+                    data=info["result"],
+                    file_name=f"{Path(info['name']).stem}.gif",
+                    mime="image/gif",
+                    key=f"dl_each_{fid}",
+                    use_container_width=True,
+                )
 
-        if info["result"]:
-            c4.download_button(
-                "💾 下載",
-                data=info["result"],
-                file_name=f"{Path(info['name']).stem}.gif",
-                mime="image/gif",
-                key=f"dl_each_{fid}",
-                use_container_width=True,
-            )
-
+        # 預覽（摺疊）
         if info["result"]:
             with st.expander("👀 預覽", expanded=is_editing_this):
                 pv1, pv2 = st.columns([1.2, 2.8])
@@ -326,6 +336,7 @@ if uploaded_files:
                         unsafe_allow_html=True
                     )
 
+        # 微調區直接在該影片下方
         if is_editing_this:
             st.markdown('<div class="edit-panel">', unsafe_allow_html=True)
             st.markdown(f"### 🛠 正在調整: {info['name']}")
@@ -377,11 +388,12 @@ if uploaded_files:
 
             if info["result"]:
                 st.image(info["result"], width=320, caption="微調預覽")
+
             st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
         st.write("")
 
 else:
-    # 沒有功能區塊時，不再額外包白框 panel
+    # 沒有功能區塊時不加白框
     st.info("👋 你好！請上傳 MP4 影片，我們會幫你把它變成 4MB 以內的 GIF。")
