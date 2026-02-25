@@ -227,7 +227,6 @@ st.divider()
 
 # --- 第二層：批次管理 ---
 if uploaded_files:
-    # 同步檔案
     current_fids = []
     for f in uploaded_files:
         fid = hashlib.md5(f.name.encode()).hexdigest()
@@ -240,23 +239,22 @@ if uploaded_files:
                 "result": None
             }
 
-    # 清理已刪除檔案
     st.session_state["files_data"] = {
         fid: info for fid, info in st.session_state["files_data"].items()
         if fid in current_fids
     }
 
-    # 若目前編輯中的檔案被移除，清空選取
     if st.session_state["editing_now"] not in st.session_state["files_data"]:
         st.session_state["editing_now"] = None
 
-    # 工具列
+    ready_results = {i["name"]: i["result"] for i in st.session_state["files_data"].values() if i["result"]}
+
+    # 工具列（有功能才用白框；這裡至少有開始轉檔按鈕，所以保留）
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     bc1, bc2 = st.columns([1, 1])
     with bc1:
         start_btn = st.button("🚀 開始批次轉檔", type="primary", use_container_width=True)
     with bc2:
-        ready_results = {i["name"]: i["result"] for i in st.session_state["files_data"].values() if i["result"]}
         if len(ready_results) > 1:
             zip_buf = io.BytesIO()
             with zipfile.ZipFile(zip_buf, "w") as zf:
@@ -269,8 +267,6 @@ if uploaded_files:
                 mime="application/zip",
                 use_container_width=True
             )
-        else:
-            st.write("")
     st.markdown("</div>", unsafe_allow_html=True)
 
     if start_btn:
@@ -284,7 +280,6 @@ if uploaded_files:
             progress_bar.progress((i + 1) / len(st.session_state["files_data"]))
         st.success("全部轉檔完成！")
 
-    # 顯示清單
     st.write("---")
     for fid, info in st.session_state["files_data"].items():
         is_editing_this = (st.session_state["editing_now"] == fid)
@@ -308,10 +303,7 @@ if uploaded_files:
                 key=f"dl_each_{fid}",
                 use_container_width=True,
             )
-        else:
-            c4.write("")
 
-        # 每支影片預覽改成摺疊/展開
         if info["result"]:
             with st.expander("👀 預覽", expanded=is_editing_this):
                 pv1, pv2 = st.columns([1.2, 2.8])
@@ -334,7 +326,6 @@ if uploaded_files:
                         unsafe_allow_html=True
                     )
 
-        # 微調區直接出現在該影片下方（只顯示目前選中的）
         if is_editing_this:
             st.markdown('<div class="edit-panel">', unsafe_allow_html=True)
             st.markdown(f"### 🛠 正在調整: {info['name']}")
@@ -392,6 +383,5 @@ if uploaded_files:
         st.write("")
 
 else:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    # 沒有功能區塊時，不再額外包白框 panel
     st.info("👋 你好！請上傳 MP4 影片，我們會幫你把它變成 4MB 以內的 GIF。")
-    st.markdown("</div>", unsafe_allow_html=True)
